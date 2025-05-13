@@ -1,3 +1,5 @@
+virtualenv
+django  
 boto3
 openpyxl
 requests
