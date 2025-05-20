@@ -1,18 +1,16 @@
 from django.shortcuts import render
 from django.http import JsonResponse, HttpResponse
 import boto3
-import openpyxl
 from openpyxl import Workbook
 from datetime import datetime, timezone
-
-from .aws_utils import get_rds_utilization, get_ec2_utilization, get_ecs_utilization
-from .url_checker import check_urls_from_file
+from .aws_utils import *
+from .url_checker import *
 
 # INDEX VIEW
 def index(request):
     return render(request, 'dashboard/index.html')
 
-# EC2 TODAY STATUS PAGE
+# -----------------------EC2 view--------------------
 def ec2_today_status(request):
     ec2 = boto3.client('ec2')
     instances = ec2.describe_instances()
@@ -40,7 +38,7 @@ def ec2_today_status(request):
         'other_instances': other_instances
     })
 
-# Download EC2 Status as Excel
+# ----------------------Download EC2 Status as Excel---------------------------------
 def export_ec2_excel(request):
     wb = Workbook()
     ws = wb.active
@@ -59,7 +57,6 @@ def export_ec2_excel(request):
             launched_today = 'Yes' if launch_time.date() == today else 'No'
             ws.append([inst_id, name, str(launch_time), status, launched_today])
 
-    # Return Excel file
     response = HttpResponse(
         content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
@@ -67,15 +64,35 @@ def export_ec2_excel(request):
     wb.save(response)
     return response
 
-# ASG SUMMARY PAGE
+# -------------------ASG SUMMARY PAGE---------------------
+def get_all_auto_scaling_groups():
+    client = boto3.client('autoscaling')
+    asgs = []
+    next_token = None
+
+    while True:
+        if next_token:
+            response = client.describe_auto_scaling_groups(NextToken=next_token)
+        else:
+            response = client.describe_auto_scaling_groups()
+
+        asgs.extend(response.get('AutoScalingGroups', []))
+        next_token = response.get('NextToken')
+        if not next_token:
+            break
+
+    return asgs
+
 def asg_summary(request):
-    ec2 = boto3.client('ec2')
     autoscaling = boto3.client('autoscaling')
 
-    # Auto Scaling Groups (detailed)
-    asgs = autoscaling.describe_auto_scaling_groups()
+    # Get all ASGs
+    asgs = get_all_auto_scaling_groups()
+    asg_count = len(asgs)
+
+    # Prepare ASG list details
     asg_list = []
-    for asg in asgs['AutoScalingGroups']:
+    for asg in asgs:
         asg_list.append({
             'name': asg.get('AutoScalingGroupName'),
             'min_size': asg.get('MinSize'),
@@ -83,15 +100,18 @@ def asg_summary(request):
             'desired_capacity': asg.get('DesiredCapacity'),
             'instance_count': len(asg.get('Instances', []))
         })
+
     return render(request, 'dashboard/partials/asg.html', {
         'asg_list': asg_list,
+        'asg_count': asg_count
     })
 
-# AMI SUMMARY PAGE
+# -------------AMI SUMMARY PAGE---------------------
 def ami_summary(request):
     ec2 = boto3.client('ec2')
     # AMIs (Owned by you)
     amis = ec2.describe_images(Owners=['self'])
+    ami_count = len(amis['Images'])
     ami_list = []
     for ami in amis['Images']:
         ami_list.append({
@@ -102,14 +122,15 @@ def ami_summary(request):
         })
 
     return render(request, 'dashboard/partials/ami.html', {
-        'ami_list': ami_list,
+        'ami_list': ami_list,'ami_count': ami_count
     })
 
-# SNAPSHOTS SUMMARY PAGE
+# ------------------SNAPSHOTS SUMMARY PAGE---------------------------
 def snapshots_summary(request):
     ec2 = boto3.client('ec2')
     # Snapshots (Owned by you)
     snapshots = ec2.describe_snapshots(OwnerIds=['self'])
+    snapshots_count = len(snapshots['Snapshots'])
     snapshot_list = []
     for snap in snapshots['Snapshots']:
         snapshot_list.append({
@@ -120,7 +141,7 @@ def snapshots_summary(request):
         })
 
     return render(request, 'dashboard/partials/snapshots.html', {
-        'snapshot_list': snapshot_list
+        'snapshot_list': snapshot_list,'snapshots_count': snapshots_count
     })
 
 # LOAD BALANCER SUMMARY PAGE
@@ -208,15 +229,14 @@ def export_lambda_excel(request):
 
 # Download ASG Summary as Excel
 def export_asg_excel(request):
-    autoscaling = boto3.client('autoscaling')
-    asgs = autoscaling.describe_auto_scaling_groups()
-    
-    wb = openpyxl.Workbook()
+    asgs = get_all_auto_scaling_groups()
+
+    wb = Workbook()
     ws = wb.active
     ws.title = "Auto Scaling Groups"
     ws.append(["Name", "Min Size", "Max Size", "Desired Capacity", "Instance Count"])
 
-    for asg in asgs['AutoScalingGroups']:
+    for asg in asgs:
         ws.append([
             asg.get('AutoScalingGroupName'),
             asg.get('MinSize'),
@@ -224,10 +244,10 @@ def export_asg_excel(request):
             asg.get('DesiredCapacity'),
             len(asg.get('Instances', []))
         ])
-
-    response = HttpResponse(content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
-    filename = f"asg_summary_{datetime.now().strftime('%Y%m%d')}.xlsx"
-    response['Content-Disposition'] = f'attachment; filename="{filename}"'
+    response = HttpResponse(
+        content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    )
+    response['Content-Disposition'] = 'attachment; filename=asg_summary.xlsx'
     wb.save(response)
     return response
 
@@ -236,7 +256,7 @@ def export_ami_excel(request):
     ec2 = boto3.client('ec2')
     amis = ec2.describe_images(Owners=['self'])
 
-    wb = openpyxl.Workbook()
+    wb = Workbook()
     ws = wb.active
     ws.title = "AMIs"
     ws.append(["Image ID", "Name", "Creation Date", "State"])
@@ -260,7 +280,7 @@ def export_snapshot_excel(request):
     ec2 = boto3.client('ec2')
     snapshots = ec2.describe_snapshots(OwnerIds=['self'])
 
-    wb = openpyxl.Workbook()
+    wb = Workbook()
     ws = wb.active
     ws.title = "Snapshots"
     ws.append(["Snapshot ID", "Start Time", "Size (GB)", "State"])
@@ -316,21 +336,27 @@ def export_lb_excel(request):
 
 # URL HEALTH CHECK PAGE
 def url_health_check(request):
-    url_results = check_urls_from_file()
+    url_stgsqlup = check_urls_from_file('dashboard/stgsqlupurl.txt')
+    url_results = check_urls_from_file('dashboard/dev2url.txt')
+
     return render(request, 'dashboard/partials/url.html', {
-        'url_results': url_results
+        'url_results': url_results,'url_stgsqlup':url_stgsqlup
     })
 
 # Download URL Health Status as Excel
 def export_url_health_excel(request):
-    url_results = check_urls_from_file()
+    url_stgsqlup = check_urls_from_file('dashboard/stgsqlupurl.txt')
+    url_results = check_urls_from_file('dashboard/dev2url.txt')
 
-    wb = openpyxl.Workbook()
+    wb = Workbook()
     ws = wb.active
     ws.title = "URL Health Status"
     ws.append(["URL", "Status", "Status Code"])
 
     for result in url_results:
+        ws.append([result['url'], result['status'], result['status_code']])
+    
+    for result in url_stgsqlup:
         ws.append([result['url'], result['status'], result['status_code']])
 
     response = HttpResponse(
@@ -385,34 +411,51 @@ def rds_utilization(request):
     return JsonResponse({'metrics': metrics, 'instances': data})
 
 def rds_utilization_ui(request):
-    return render(request, 'dashboard/partials/rds.html')
+    return render(request, 'dashboard/partials/rds_redis.html')
+
+def redis_utilization(request):
+    data = get_redis_utilization()
+    return JsonResponse({'metrics': data})
+
+def redis_utilization_ui(request):
+    return render(request, 'dashboard/partials/rds_redis.html')
+
 
 # Download RDS Utilization as Excel
 def export_rds_utilization_excel(request):
     metrics = get_rds_utilization()
+    datas = get_redis_utilization()
 
     wb = Workbook()
     ws = wb.active
-    ws.title = "RDS Utilization"
+    ws.title = "Rds&Redis Utilization"
 
-    # Add header
-    ws.append(['DB Identifier', 'CPU Utilization (%)', 'Freeable Memory (MB)'])
+    ws.append(['Resources','Name', 'CPU Utilization (%)', 'Memory'])
 
-    # Add data rows
+    for metric in datas:
+        ws.append([
+            'Redis',
+            metric['cluster'],
+            metric['cpu'],
+            metric['memory']
+        ])
+
     for metric in metrics:
         ws.append([
+            'RDS',
             metric['db_id'],
             metric['cpu'],
             metric['memory']
         ])
 
-    # Create HTTP response with Excel
     response = HttpResponse(
         content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
     )
-    response['Content-Disposition'] = 'attachment; filename=RDS_Utilization.xlsx'
+    response['Content-Disposition'] = 'attachment; filename=Rds&Redis_Utilization.xlsx'
     wb.save(response)
     return response
+
+
 
 # ECS UTILIZATION PAGE
 def ecs_utilization(request):
@@ -449,3 +492,70 @@ def export_ecs_utilization_excel(request):
     response['Content-Disposition'] = 'attachment; filename=ECS_Utilization.xlsx'
     wb.save(response)
     return response
+
+# Target Group summary page
+
+def list_target_groups_with_health_and_lb():
+    elbv2 = boto3.client('elbv2')
+    paginator = elbv2.get_paginator('describe_target_groups')
+
+    result = []
+
+    for page in paginator.paginate():
+        for tg in page['TargetGroups']:
+            tg_arn = tg.get('TargetGroupArn')
+            tg_name = tg.get('TargetGroupName', 'N/A')
+
+            # Fetch associated Load Balancers
+            lb_arns = tg.get('LoadBalancerArns', [])
+            if lb_arns:
+                lb_names = []
+                for lb_arn in lb_arns:
+                    lb_info = elbv2.describe_load_balancers(LoadBalancerArns=[lb_arn])
+                    for lb in lb_info.get('LoadBalancers', []):
+                        lb_names.append(lb.get('LoadBalancerName'))
+            else:
+                lb_names = ['Not associated']
+
+            # Fetch target health
+            try:
+                health_response = elbv2.describe_target_health(TargetGroupArn=tg_arn)
+                targets = []
+                for th in health_response['TargetHealthDescriptions']:
+                    targets.append({
+                        'id': th['Target']['Id'],
+                        'port': th['Target']['Port'],
+                        'state': th['TargetHealth']['State'],
+                        'reason': th['TargetHealth'].get('Reason', ''),
+                        'description': th['TargetHealth'].get('Description', '')
+                    })
+            except Exception as e:
+                targets = [{'id': 'Error', 'port': '-', 'state': str(e), 'reason': '', 'description': ''}]
+
+            result.append({
+                'name': tg_name,
+                'protocol': tg.get('Protocol', 'N/A'),
+                'port': tg.get('Port', 'N/A'),
+                'vpc_id': tg.get('VpcId', 'N/A'),
+                'target_type': tg.get('TargetType', 'N/A'),
+                'load_balancers': lb_names,
+                'targets': targets
+            })
+
+    return result
+
+def target_group_list(request):
+    groups = list_target_groups_with_health_and_lb()
+    tg_count = len(groups)
+    return render(request, 'dashboard/partials/target_groups.html', {
+        'target_groups': groups,
+        'tg_count': tg_count
+    })
+
+
+def asg_utilization(request):
+    metrics = get_asg_utilization()
+    return JsonResponse({'metrics': metrics})
+
+def asg_utilization_ui(request):
+    return render(request, 'dashboard/partials/asg_util.html')

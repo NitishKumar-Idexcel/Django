@@ -1,6 +1,5 @@
 import requests
-
-def check_urls_from_file(file_path='dashboard/url.txt'):
+def check_urls_from_file(file_path):
     results = []
     try:
         with open(file_path, 'r') as f:
@@ -21,7 +20,7 @@ def check_urls_from_file(file_path='dashboard/url.txt'):
                 })
     except FileNotFoundError:
         results.append({
-            'url': 'File url.txt not found',
+            'url': f'File {file_path} not found',
             'status': 'Error',
             'status_code': 'N/A'
         })

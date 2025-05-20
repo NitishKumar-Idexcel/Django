@@ -1,0 +1,42 @@
+{
+    "family": "aws-dashboard",
+    "containerDefinitions": [
+        {
+            "name": "aws-dashboard",
+            "image": "637423186957.dkr.ecr.us-east-1.amazonaws.com/nikrepo:latest",
+            "cpu": 0,
+            "portMappings": [
+                {
+                    "name": "container-8000-protocal",
+                    "containerPort": 8000,
+                    "hostPort": 8000,
+                    "protocol": "tcp",
+                    "appProtocol": "http"
+                }
+            ],
+            "essential": true,
+            "environment": [],
+            "mountPoints": [],
+            "volumesFrom": [],
+            "logConfiguration": {
+                "logDriver": "awslogs",
+                "options": {
+                    "awslogs-group": "/ecs/aws-dashboard",
+                    "awslogs-region": "us-east-1",
+                    "awslogs-stream-prefix": "ecs"
+                }
+            },
+            "systemControls": []
+        }
+    ],
+    "taskRoleArn": "arn:aws:iam::637423186957:role/nikECStaskrole",
+    "executionRoleArn": "arn:aws:iam::637423186957:role/ecsTaskExecutionRole",
+    "networkMode": "awsvpc",
+    "volumes": [],
+    "placementConstraints": [],
+    "requiresCompatibilities": [
+        "FARGATE"
+    ],
+    "cpu": "256",
+    "memory": "512"
+}

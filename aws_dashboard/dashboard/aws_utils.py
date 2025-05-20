@@ -12,7 +12,7 @@ def get_ec2_utilization():
 
     metrics = []
     now = datetime.now(timezone.utc)
-    start = now - timedelta(minutes=10)
+    start = now - timedelta(minutes=5)
 
     for reservation in instances['Reservations']:
         for inst in reservation['Instances']:
@@ -86,64 +86,196 @@ def get_rds_utilization():
 
     return metrics
 
+def get_redis_utilization():
+    client = boto3.client('elasticache')
+    cw = boto3.client('cloudwatch')
+    now = datetime.now(timezone.utc)
+    start = now - timedelta(minutes=5)
+
+    metrics = []
+
+    # List all Redis (ElastiCache) clusters
+    clusters = client.describe_cache_clusters(ShowCacheNodeInfo=True)['CacheClusters']
+    for cluster in clusters:
+        if cluster['Engine'] != 'redis':
+            continue
+
+        cluster_id = cluster['CacheClusterId']
+        node_ids = [node['CacheNodeId'] for node in cluster['CacheNodes']]
+
+        for node_id in node_ids:
+            # CPU Utilization
+            cpu_data = cw.get_metric_statistics(
+                Namespace='AWS/ElastiCache',
+                MetricName='CPUUtilization',
+                Dimensions=[
+                    {'Name': 'CacheClusterId', 'Value': cluster_id},
+                    {'Name': 'CacheNodeId', 'Value': node_id}
+                ],
+                StartTime=start,
+                EndTime=now,
+                Period=300,
+                Statistics=['Average']
+            )
+
+            # FreeableMemory (proxy for memory usage)
+            mem_data = cw.get_metric_statistics(
+                Namespace='AWS/ElastiCache',
+                MetricName='FreeableMemory',
+                Dimensions=[
+                    {'Name': 'CacheClusterId', 'Value': cluster_id},
+                    {'Name': 'CacheNodeId', 'Value': node_id}
+                ],
+                StartTime=start,
+                EndTime=now,
+                Period=300,
+                Statistics=['Average']
+            )
+
+            cpu = round(cpu_data['Datapoints'][0]['Average'], 2) if cpu_data['Datapoints'] else 0.0
+            mem = round(mem_data['Datapoints'][0]['Average'] / (1024 ** 2), 2) if mem_data['Datapoints'] else 0.0
+
+            metrics.append({
+                'cluster': cluster_id,
+                'node': node_id,
+                'cpu': cpu,
+                'memory': f"{mem} MB" 
+            })
+
+    return metrics
+
+import boto3
+from datetime import datetime, timedelta, timezone
+
 def get_ecs_utilization():
     ecs = boto3.client('ecs')
     cw = boto3.client('cloudwatch')
     now = datetime.now(timezone.utc)
-    start = now - timedelta(minutes=10)
+    start = now - timedelta(minutes=5)
 
     metrics = []
 
-    # List all clusters
-    clusters = ecs.list_clusters()['clusterArns']
-    for cluster_arn in clusters:
-        # List running services in the cluster
-        services = ecs.list_services(cluster=cluster_arn, launchType='EC2')['serviceArns']
-        if not services:
+    # Use paginator to get all cluster ARNs
+    paginator = ecs.get_paginator('list_clusters')
+    cluster_arns = []
+    for page in paginator.paginate():
+        cluster_arns.extend(page['clusterArns'])
+
+    for cluster_arn in cluster_arns:
+        cluster_name = cluster_arn.split('/')[-1]
+
+        # Use paginator to get all service ARNs in each cluster
+        service_arns = []
+        service_paginator = ecs.get_paginator('list_services')
+        for page in service_paginator.paginate(cluster=cluster_arn):
+            service_arns.extend(page['serviceArns'])
+
+        if not service_arns:
             continue
 
-        service_details = ecs.describe_services(cluster=cluster_arn, services=services)['services']
+        # Batch describe services (max 10 at a time)
+        for i in range(0, len(service_arns), 10):
+            batch = service_arns[i:i + 10]
+            services = ecs.describe_services(cluster=cluster_arn, services=batch)['services']
 
-        for service in service_details:
-            service_name = service['serviceName']
-            cluster_name = cluster_arn.split('/')[-1]
+            for service in services:
+                service_name = service['serviceName']
 
-            # CPU Utilization
+                # CloudWatch metric queries
+                cpu = cw.get_metric_statistics(
+                    Namespace='AWS/ECS',
+                    MetricName='CPUUtilization',
+                    Dimensions=[
+                        {'Name': 'ClusterName', 'Value': cluster_name},
+                        {'Name': 'ServiceName', 'Value': service_name}
+                    ],
+                    StartTime=start,
+                    EndTime=now,
+                    Period=300,
+                    Statistics=['Average']
+                )
+
+                memory = cw.get_metric_statistics(
+                    Namespace='AWS/ECS',
+                    MetricName='MemoryUtilization',
+                    Dimensions=[
+                        {'Name': 'ClusterName', 'Value': cluster_name},
+                        {'Name': 'ServiceName', 'Value': service_name}
+                    ],
+                    StartTime=start,
+                    EndTime=now,
+                    Period=300,
+                    Statistics=['Average']
+                )
+
+                cpu_val = round(cpu['Datapoints'][0]['Average'], 2) if cpu['Datapoints'] else 0.0
+                mem_val = round(memory['Datapoints'][0]['Average'], 2) if memory['Datapoints'] else 0.0
+
+                metrics.append({
+                    'cluster': cluster_name,
+                    'service': service_name,
+                    'cpu': cpu_val,
+                    'memory': mem_val
+                })
+
+    return metrics
+
+def get_asg_utilization():
+    cw = boto3.client('cloudwatch')
+    autoscaling = boto3.client('autoscaling')
+    now = datetime.now(timezone.utc)
+    start = now - timedelta(minutes=5)
+
+    metrics = []
+
+    paginator = autoscaling.get_paginator('describe_auto_scaling_groups')
+    for page in paginator.paginate():
+        for asg in page['AutoScalingGroups']:
+            asg_name = asg['AutoScalingGroupName']
+
+            # CPU
             cpu = cw.get_metric_statistics(
-                Namespace='AWS/ECS',
+                Namespace='AWS/EC2',
                 MetricName='CPUUtilization',
-                Dimensions=[
-                    {'Name': 'ClusterName', 'Value': cluster_name},
-                    {'Name': 'ServiceName', 'Value': service_name}
-                ],
+                Dimensions=[{'Name': 'AutoScalingGroupName', 'Value': asg_name}],
                 StartTime=start,
                 EndTime=now,
                 Period=300,
                 Statistics=['Average']
             )
 
-            # Memory Utilization
-            memory = cw.get_metric_statistics(
-                Namespace='AWS/ECS',
-                MetricName='MemoryUtilization',
-                Dimensions=[
-                    {'Name': 'ClusterName', 'Value': cluster_name},
-                    {'Name': 'ServiceName', 'Value': service_name}
-                ],
+            # Memory
+            mem = cw.get_metric_statistics(
+                Namespace='CWAgent',
+                MetricName='mem_used_percent',
+                Dimensions=[{'Name': 'AutoScalingGroupName', 'Value': asg_name}],
                 StartTime=start,
                 EndTime=now,
                 Period=300,
                 Statistics=['Average']
             )
 
-            cpu_val = round(cpu['Datapoints'][0]['Average'], 2) if cpu['Datapoints'] else 0.0
-            mem_val = round(memory['Datapoints'][0]['Average'], 2) if memory['Datapoints'] else 0.0
+            # Disk
+            disk = cw.get_metric_statistics(
+                Namespace='CWAgent',
+                MetricName='disk_used_percent',
+                Dimensions=[
+                    {'Name': 'path', 'Value': '/'},
+                    {'Name': 'AutoScalingGroupName', 'Value': asg_name},
+                    {'Name': 'device', 'Value': 'nvme0n1p1'},
+                    {'Name': 'fstype', 'Value': 'ext4'}
+                ],
+                StartTime=start,
+                EndTime=now,
+                Period=300,
+                Statistics=['Average']
+            )
 
             metrics.append({
-                'cluster': cluster_name,
-                'service': service_name,
-                'cpu': cpu_val,
-                'memory': mem_val
+                'asg_name': asg_name,
+                'cpu': round(cpu['Datapoints'][0]['Average'], 2) if cpu['Datapoints'] else 0.0,
+                'memory': round(mem['Datapoints'][0]['Average'], 2) if mem['Datapoints'] else 0.0,
+                'disk': round(disk['Datapoints'][0]['Average'], 2) if disk['Datapoints'] else 0.0
             })
 
     return metrics

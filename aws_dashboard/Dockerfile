@@ -1,34 +1,43 @@
 # Use Python 3.9 slim base image
 FROM python:3.9-slim
 
-# Set working directory
+# Set environment variables
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    DJANGO_SETTINGS_MODULE=aws_dashboard.settings \
+    # Add gunicorn environment variables
+    WORKERS=4 \
+    PORT=8000 
+    # Add AWS environment variables
+
+
+# Set work directory
 WORKDIR /app
 
-# Install system dependencies and python3-venv for virtual environment
+# Install system dependencies
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
     build-essential \
-    python3-venv \
     && rm -rf /var/lib/apt/lists/*
 
-# Create virtual environment
-RUN python -m venv /opt/venv
-
-# Activate virtual environment
-ENV PATH="/opt/venv/bin:$PATH"
-
-# Upgrade pip
-RUN pip install --upgrade pip
-
-# Copy requirements file and install Python dependencies
+# Copy requirements file
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy the rest of the application code
+# Install Python dependencies
+RUN pip install --no-cache-dir -r requirements.txt \
+    # Add gunicorn
+    && pip install --no-cache-dir gunicorn
+# Copy project files
 COPY . .
 
-# Expose port 80
-EXPOSE 80
 
-# Run Django server on port 80
-CMD ["python", "manage.py", "runserver", "0.0.0.0:80"]
+# Make port 8000 available
+EXPOSE 8000
+
+# Create a non-root user
+RUN adduser --disabled-password --gecos '' appuser
+RUN chown -R appuser:appuser /app
+USER appuser
+
+# Run gunicorn
+CMD ["gunicorn", "aws_dashboard.wsgi:application", "--bind", "0.0.0.0:8000"]

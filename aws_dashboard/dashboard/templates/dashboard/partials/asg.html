@@ -19,7 +19,11 @@
         <!-- Auto Scaling Groups -->
         <div class="card mb-4">
             <div class="card-header bg-primary text-white">
-                Auto Scaling Groups
+                <div style="display: flex; justify-content: space-between;">
+                    <div>Auto Scaling Groups</div>
+                    <div>Total ASG: {{ asg_count }}</div>
+                </div>
+                
             </div>
             <div class="card-body p-0">
                 <table class="table table-striped table-hover mb-0">

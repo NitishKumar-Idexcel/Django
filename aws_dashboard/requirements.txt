@@ -1,5 +1,6 @@
-virtualenv
-django  
 boto3
 openpyxl
 requests
+datetime
+gunicorn==20.1.0
+django
