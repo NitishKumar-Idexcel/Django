@@ -1,0 +1,105 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: The template used to create an ECS Service from the ECS Console.
+Parameters:
+  ECSClusterName:
+    Type: String
+    Default: Test-nik
+  ECSServiceName:
+    Type: String
+    Default: aws-dashboard-service-testing
+  SecurityGroupIDs:
+    Type: CommaDelimitedList
+    Default: sg-0fcfafe2bfd468133
+  SubnetIDs:
+    Type: CommaDelimitedList
+    Default: subnet-064cc1c38ece97bd0,subnet-00006d1a0ad91a037,subnet-0dcdff5c7480fd104,subnet-0ed17444f2b812ab8,subnet-0db05f3769a02098e,subnet-08bd396b48dbf356a
+  VpcID:
+    Type: String
+    Default: vpc-00bb349dba6607ee7
+  LoadBalancerName:
+    Type: String
+    Default: ecs-nik-test-lb
+Resources:
+  ECSService:
+    Type: AWS::ECS::Service
+    Properties:
+      Cluster: Test-nik
+      CapacityProviderStrategy:
+        - CapacityProvider: FARGATE
+          Base: 0
+          Weight: 1
+      TaskDefinition: arn:aws:ecs:us-east-1:637423186957:task-definition/aws-dashboard:14
+      ServiceName: aws-dashboard-service-testing
+      SchedulingStrategy: REPLICA
+      DesiredCount: 1
+      AvailabilityZoneRebalancing: ENABLED
+      LoadBalancers:
+        - ContainerName: aws-dashboard
+          ContainerPort: 8000
+          LoadBalancerName: !Ref AWS::NoValue
+          TargetGroupArn: !Ref TargetGroup
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: ENABLED
+          SecurityGroups: !Ref SecurityGroupIDs
+          Subnets: !Ref SubnetIDs
+      PlatformVersion: LATEST
+      DeploymentConfiguration:
+        DeploymentCircuitBreaker:
+          Enable: true
+          Rollback: true
+        MaximumPercent: 200
+        MinimumHealthyPercent: 100
+      DeploymentController:
+        Type: ECS
+      ServiceConnectConfiguration:
+        Enabled: false
+      Tags: []
+      EnableECSManagedTags: true
+    DependsOn:
+      - Listener
+  LoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Type: application
+      Name: ecs-nik-test-lb
+      SecurityGroups: !Ref SecurityGroupIDs
+      Subnets: !Ref SubnetIDs
+  TargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      HealthCheckPath: /
+      Name: ecs-nik-test-tg
+      Port: 80
+      Protocol: HTTP
+      TargetType: ip
+      HealthCheckProtocol: HTTP
+      VpcId: !Ref VpcID
+      TargetGroupAttributes:
+        - Key: deregistration_delay.timeout_seconds
+          Value: '300'
+  Listener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref TargetGroup
+      LoadBalancerArn: !Ref LoadBalancer
+      Port: 80
+      Protocol: HTTP
+Outputs:
+  ClusterName:
+    Description: The cluster used to create the service.
+    Value: !Ref ECSClusterName
+  ECSService:
+    Description: The created service.
+    Value: !Ref ECSService
+  LoadBalancer:
+    Description: The created load balancer.
+    Value: !Ref LoadBalancer
+  Listener:
+    Description: The created listener.
+    Value: !Ref Listener
+  TargetGroup:
+    Description: The created target group.
+    Value: !Ref TargetGroup

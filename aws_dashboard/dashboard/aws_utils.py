@@ -144,8 +144,6 @@ def get_redis_utilization():
 
     return metrics
 
-import boto3
-from datetime import datetime, timedelta, timezone
 
 def get_ecs_utilization():
     ecs = boto3.client('ecs')
